@@ -1,0 +1,24 @@
+{
+  "RT_MANIFEST": {
+    "#1": {
+      "0409": {
+        "identity": {
+          "name": "TrayClash",
+          "version": "1.0.0.0"
+        },
+        "description": "Mihomo Proxy Tray Controller",
+        "minimum-os": "win7",
+        "execution-level": "require administrator",
+        "ui-access": false,
+        "auto-elevate": false,
+        "dpi-awareness": "system",
+        "ms-styles": true
+      }
+    }
+  },
+  "RT_GROUP_ICON": {
+    "APP": {
+      "0409": "../assets/icon.ico"
+    }
+  }
+}

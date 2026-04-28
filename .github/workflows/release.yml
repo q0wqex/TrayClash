@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            name: x64
+          - arch: '386'
+            name: x86
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.20'
+          cache: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install go-winres
+        run: go install github.com/tc-hib/go-winres@latest
+
+      - name: Generate resources
+        run: go-winres make
+
+      - name: Build
+        env:
+          GOOS: windows
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -trimpath -ldflags="-s -w -H windowsgui" -o TrayClash-${{ matrix.name }}.exe .
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: TrayClash-${{ matrix.name }}.exe
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

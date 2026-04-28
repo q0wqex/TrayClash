@@ -1,0 +1,34 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+TrayClash.exe
+
+# Allow embedded cores and libraries
+!assets/bin/x64/mihomo.exe
+!assets/bin/x64/wintun.dll
+!assets/bin/x86/mihomo.exe
+!assets/bin/x86/wintun.dll
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Go
+# go.sum SHOULD be tracked
+# vendor/
+
+# Generated resources (generated during build)
+*.syso
+
+# Local files
+url.txt
+config.yaml
+logs/
+~inputtmp.txt
+
+# Build output
+dist/
+/bin/
