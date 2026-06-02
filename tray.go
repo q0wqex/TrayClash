@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,6 +31,41 @@ func showMessage(title, text string) {
 	tPtr, _ := syscall.UTF16PtrFromString(title)
 	mPtr, _ := syscall.UTF16PtrFromString(text)
 	procMessageBoxW.Call(0, uintptr(unsafe.Pointer(mPtr)), uintptr(unsafe.Pointer(tPtr)), 0)
+}
+
+func askYesNo(title, text string) bool {
+	tPtr, _ := syscall.UTF16PtrFromString(title)
+	mPtr, _ := syscall.UTF16PtrFromString(text)
+	// MB_YESNO | MB_ICONQUESTION = 0x4 | 0x20 = 0x24
+	ret, _, _ := procMessageBoxW.Call(0, uintptr(unsafe.Pointer(mPtr)), uintptr(unsafe.Pointer(tPtr)), 0x24)
+	return ret == 6 // IDYES = 6
+}
+
+func parseDeepLink(arg string) (string, error) {
+	if !strings.HasPrefix(arg, "tray-clash:") {
+		return "", fmt.Errorf("invalid scheme")
+	}
+
+	normalized := arg
+	if !strings.HasPrefix(normalized, "tray-clash://") {
+		normalized = "tray-clash://" + strings.TrimPrefix(normalized, "tray-clash:")
+	}
+
+	u, err := url.Parse(normalized)
+	if err != nil {
+		return "", err
+	}
+
+	if u.Host != "install-config" {
+		return "", fmt.Errorf("unknown command: %s", u.Host)
+	}
+
+	linkURL := u.Query().Get("url")
+	if linkURL == "" {
+		return "", fmt.Errorf("missing url parameter")
+	}
+
+	return linkURL, nil
 }
 
 func escapePS(s string) string {
@@ -281,6 +318,71 @@ func onReady() {
 	go func() {
 		for {
 			select {
+
+			case link := <-deepLinkCh:
+				linkURL, err := parseDeepLink(link)
+				if err != nil {
+					showMessage("Ошибка диплинка", "Неверный формат ссылки:\n"+err.Error())
+					continue
+				}
+
+				if !askYesNo("Импорт подписки", "Хотите добавить и активировать новую подписку?\nURL: "+linkURL) {
+					continue
+				}
+
+				device := GetDeviceInfo()
+				tmpPath := filepath.Join(exeDir(), "tmp_config.yaml")
+				res := DownloadConfig(linkURL, device, tmpPath)
+				os.Remove(tmpPath)
+
+				if res.Err != nil {
+					showMessage("Ошибка", "Не удалось получить данные подписки:\n"+res.Err.Error())
+					continue
+				}
+
+				name := res.ProfileTitle
+				if name == "" {
+					name = inputBox("Название подписки", "Сервер не вернул название. Введите вручную:", "Новая подписка")
+				}
+				if name == "" {
+					continue
+				}
+
+				cfg, _ := LoadSubConfig()
+
+				existsIdx := -1
+				for idx, sub := range cfg.Subscriptions {
+					if sub.URL == linkURL {
+						existsIdx = idx
+						break
+					}
+				}
+
+				if existsIdx != -1 {
+					cfg.Subscriptions[existsIdx].Name = name
+					cfg.ActiveIndex = existsIdx
+				} else {
+					cfg.Subscriptions = append(cfg.Subscriptions, Subscription{Name: name, URL: linkURL})
+					cfg.ActiveIndex = len(cfg.Subscriptions) - 1
+				}
+
+				SaveSubConfig(cfg)
+				updateSubs()
+
+				if isProcessRunning(pm) {
+					pm.Stop()
+					os.Remove(filepath.Join(exeDir(), "config.yaml"))
+					go func() {
+						time.Sleep(100 * time.Millisecond)
+						mToggle.ClickedCh <- struct{}{}
+					}()
+				} else {
+					os.Remove(filepath.Join(exeDir(), "config.yaml"))
+					go func() {
+						time.Sleep(100 * time.Millisecond)
+						mToggle.ClickedCh <- struct{}{}
+					}()
+				}
 
 			case <-ticker.C:
 				running := isProcessRunning(pm)
