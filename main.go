@@ -6,11 +6,40 @@ import (
 	"net"
 	"os"
 	"strings"
+	"syscall"
+	"unsafe"
 
 	"github.com/getlantern/systray"
+	"golang.org/x/sys/windows/registry"
 )
 
 var deepLinkCh = make(chan string, 10)
+
+var (
+	procCreateMutexW = kernel32.NewProc("CreateMutexW")
+)
+
+const ERROR_ALREADY_EXISTS = 183
+
+func checkSingleInstance() (syscall.Handle, bool) {
+	name, err := syscall.UTF16PtrFromString("Local\\TrayClashSingleInstanceMutex")
+	if err != nil {
+		return 0, false
+	}
+
+	// CreateMutexW(nil, true, name)
+	ret, _, err := procCreateMutexW.Call(0, 1, uintptr(unsafe.Pointer(name)))
+	if ret == 0 {
+		return 0, false
+	}
+
+	if err != nil && err.(syscall.Errno) == ERROR_ALREADY_EXISTS {
+		syscall.CloseHandle(syscall.Handle(ret))
+		return 0, false
+	}
+
+	return syscall.Handle(ret), true
+}
 
 func registerProtocol() {
 	exe, err := os.Executable()
@@ -18,12 +47,25 @@ func registerProtocol() {
 		return
 	}
 
-	// Register protocol handler under HKEY_CURRENT_USER\Software\Classes
-	runHidden("reg", "add", "HKCU\\Software\\Classes\\tray-clash", "/ve", "/t", "REG_SZ", "/d", "URL:TrayClash Protocol", "/f").Run()
-	runHidden("reg", "add", "HKCU\\Software\\Classes\\tray-clash", "/v", "URL Protocol", "/t", "REG_SZ", "/d", "", "/f").Run()
+	// Open or create HKCU\Software\Classes\tray-clash using Go's registry package
+	k, _, err := registry.CreateKey(registry.CURRENT_USER, `Software\Classes\tray-clash`, registry.ALL_ACCESS)
+	if err != nil {
+		return
+	}
+	defer k.Close()
+
+	k.SetStringValue("", "URL:TrayClash Protocol")
+	k.SetStringValue("URL Protocol", "")
+
+	// Create shell\open\command
+	cmdKey, _, err := registry.CreateKey(k, `shell\open\command`, registry.ALL_ACCESS)
+	if err != nil {
+		return
+	}
+	defer cmdKey.Close()
 
 	cmdVal := fmt.Sprintf("\"%s\" \"%%1\"", exe)
-	runHidden("reg", "add", "HKCU\\Software\\Classes\\tray-clash\\shell\\open\\command", "/ve", "/t", "REG_SZ", "/d", cmdVal, "/f").Run()
+	cmdKey.SetStringValue("", cmdVal)
 }
 
 func main() {
@@ -39,9 +81,9 @@ func main() {
 		}
 	}
 
-	// 3. Single-instance lock via local TCP port
-	listener, err := net.Listen("tcp", "127.0.0.1:39281")
-	if err != nil {
+	// 3. Single-instance check via Mutex
+	mutexHandle, isPrimary := checkSingleInstance()
+	if !isPrimary {
 		// Another instance is already running!
 		if initialDeepLink != "" {
 			// Connect to the primary instance and send the deep link URL
@@ -54,27 +96,32 @@ func main() {
 		// Exit this secondary instance
 		return
 	}
-	defer listener.Close()
+	defer syscall.CloseHandle(mutexHandle)
 
 	// 4. Start IPC server to listen for deep links from other instances
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			go func(c net.Conn) {
-				defer c.Close()
-				scanner := bufio.NewScanner(c)
-				if scanner.Scan() {
-					link := strings.TrimSpace(scanner.Text())
-					if link != "" {
-						deepLinkCh <- link
-					}
+	// If net.Listen fails (e.g. firewall blocked on Windows 7), we don't crash or exit.
+	listener, err := net.Listen("tcp", "127.0.0.1:39281")
+	if err == nil {
+		go func() {
+			defer listener.Close()
+			for {
+				conn, err := listener.Accept()
+				if err != nil {
+					return
 				}
-			}(conn)
-		}
-	}()
+				go func(c net.Conn) {
+					defer c.Close()
+					scanner := bufio.NewScanner(c)
+					if scanner.Scan() {
+						link := strings.TrimSpace(scanner.Text())
+						if link != "" {
+							deepLinkCh <- link
+						}
+					}
+				}(conn)
+			}
+		}()
+	}
 
 	// 5. If we have an initial deep link, send it to the channel
 	if initialDeepLink != "" {
