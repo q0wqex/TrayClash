@@ -47,8 +47,8 @@ func registerProtocol() {
 		return
 	}
 
-	// Open or create HKCU\Software\Classes\tray-clash using Go's registry package
-	k, _, err := registry.CreateKey(registry.CURRENT_USER, `Software\Classes\tray-clash`, registry.ALL_ACCESS)
+	// Open or create HKCU\Software\Classes\tray-clash using Go's registry package with registry.WRITE access
+	k, _, err := registry.CreateKey(registry.CURRENT_USER, `Software\Classes\tray-clash`, registry.WRITE)
 	if err != nil {
 		return
 	}
@@ -58,7 +58,7 @@ func registerProtocol() {
 	k.SetStringValue("URL Protocol", "")
 
 	// Create shell\open\command
-	cmdKey, _, err := registry.CreateKey(k, `shell\open\command`, registry.ALL_ACCESS)
+	cmdKey, _, err := registry.CreateKey(k, `shell\open\command`, registry.WRITE)
 	if err != nil {
 		return
 	}
