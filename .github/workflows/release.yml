@@ -21,6 +21,33 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Create bin directories
+        run: |
+          mkdir -p assets/bin/x64
+          mkdir -p assets/bin/x86
+
+      - name: Download and extract Wintun
+        run: |
+          curl -L -o wintun.zip https://www.wintun.net/builds/wintun-0.14.1.zip
+          unzip wintun.zip -d wintun_extracted
+          cp wintun_extracted/wintun/bin/amd64/wintun.dll assets/bin/x64/wintun.dll
+          cp wintun_extracted/wintun/bin/x86/wintun.dll assets/bin/x86/wintun.dll
+          rm -rf wintun.zip wintun_extracted
+
+      - name: Download and extract Mihomo cores
+        run: |
+          # Download x64 Mihomo (go120 version)
+          curl -L -o mihomo_x64.zip https://github.com/MetaCubeX/mihomo/releases/download/v1.19.26/mihomo-windows-amd64-v1-go120-v1.19.26.zip
+          unzip mihomo_x64.zip -d mihomo_x64_extracted
+          mv mihomo_x64_extracted/*.exe assets/bin/x64/mihomo.exe
+          
+          # Download x86 Mihomo (go120 version)
+          curl -L -o mihomo_x86.zip https://github.com/MetaCubeX/mihomo/releases/download/v1.19.26/mihomo-windows-386-go120-v1.19.26.zip
+          unzip mihomo_x86.zip -d mihomo_x86_extracted
+          mv mihomo_x86_extracted/*.exe assets/bin/x86/mihomo.exe
+          
+          rm -rf mihomo_x64.zip mihomo_x64_extracted mihomo_x86.zip mihomo_x86_extracted
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:

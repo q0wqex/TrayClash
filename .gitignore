@@ -6,11 +6,8 @@
 *.dylib
 TrayClash.exe
 
-# Allow embedded cores and libraries
-!assets/bin/x64/mihomo.exe
-!assets/bin/x64/wintun.dll
-!assets/bin/x86/mihomo.exe
-!assets/bin/x86/wintun.dll
+# Ignore embedded cores and libraries
+assets/bin/
 
 # OS generated files
 .DS_Store
