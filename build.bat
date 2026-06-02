@@ -21,15 +21,10 @@ echo Cleaning up old builds...
 if exist dist rmdir /s /q dist
 mkdir dist
 
-echo Building x64 version...
-set GOARCH=amd64
-set CGO_ENABLED=0
-%GO_BIN% build -trimpath -ldflags="-s -w -H windowsgui" -o dist\TrayClash-x64.exe .
-
 echo Building x86 version...
 set GOARCH=386
 set CGO_ENABLED=0
-%GO_BIN% build -trimpath -ldflags="-s -w -H windowsgui" -o dist\TrayClash-x86.exe .
+%GO_BIN% build -trimpath -ldflags="-s -w -H windowsgui" -o dist\TrayClash.exe .
 
 
 echo Done!
