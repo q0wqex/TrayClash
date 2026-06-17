@@ -94,9 +94,17 @@ func isProcessRunning(pm *ProcessManager) bool {
 }
 
 const (
-	maxProxyItems = 64
-	maxSubItems   = 16
+	maxProxyItems      = 64
+	maxSubItems        = 16
+	maxGroups          = 15
+	maxProxiesPerGroup = 64
 )
+
+type GroupMenu struct {
+	Item    *systray.MenuItem
+	Proxies []*systray.MenuItem
+}
+
 
 func prepareResources() {
 	// Extract embedded files to AppData
@@ -146,92 +154,134 @@ func onReady() {
 	systray.AddSeparator()
 
 	// ── 3. Прокси ────────────────────────────────────────────────
-	mProxies := systray.AddMenuItem("Прокси", "Список прокси активной группы")
-	mProxies.Disable() // включится когда загрузятся прокси
+	groupMenus := make([]GroupMenu, maxGroups)
+	for g := 0; g < maxGroups; g++ {
+		groupMenus[g].Item = systray.AddMenuItem("", "")
+		groupMenus[g].Item.Hide()
+		groupMenus[g].Proxies = make([]*systray.MenuItem, maxProxiesPerGroup)
+		for p := 0; p < maxProxiesPerGroup; p++ {
+			groupMenus[g].Proxies[p] = groupMenus[g].Item.AddSubMenuItem("", "")
+			groupMenus[g].Proxies[p].Hide()
+		}
+	}
 
-	proxyPool := make([]*systray.MenuItem, maxProxyItems)
-	for i := range proxyPool {
-		proxyPool[i] = mProxies.AddSubMenuItem("", "")
-		proxyPool[i].Hide()
+	type GroupData struct {
+		Name string
+		All  []string
 	}
 
 	var (
-		proxyMu     sync.Mutex
-		activeGroup string
-		proxyNames  []string
+		proxyMu          sync.Mutex
+		activeGroupsData []GroupData
 	)
 
 	// Канал для обработки кликов по прокси
 	type proxyClick struct {
-		idx int
+		groupIndex int
+		proxyIndex int
 	}
-	proxyClickCh := make(chan proxyClick, 5)
+	proxyClickCh := make(chan proxyClick, 15)
 
-	for i := range proxyPool {
-		idx := i
-		go func(item *systray.MenuItem) {
-			for range item.ClickedCh {
-				proxyClickCh <- proxyClick{idx}
-			}
-		}(proxyPool[i])
+	for g := 0; g < maxGroups; g++ {
+		groupIndex := g
+		for p := 0; p < maxProxiesPerGroup; p++ {
+			proxyIndex := p
+			go func(item *systray.MenuItem) {
+				for range item.ClickedCh {
+					proxyClickCh <- proxyClick{groupIndex, proxyIndex}
+				}
+			}(groupMenus[g].Proxies[p])
+		}
 	}
 
-	// updateProxies: берёт первую пользовательскую Selector-группу (не GLOBAL)
+
+	// updateProxies: берёт все Selector-группы в порядке их расположения в конфиге
 	updateProxies := func() {
 		groups, err := api.GetProxyGroups()
 		if err != nil {
 			return
 		}
 
-		// Ищем первую подходящую группу
-		var selectedKey string
-		var selectedGroup ProxyGroup
+		orderedNames := GetOrderedSelectGroupsFromConfig()
 
-		// Сначала ищем не GLOBAL
-		for k, g := range groups {
-			if strings.EqualFold(k, "GLOBAL") {
-				continue
-			}
-			if selectedKey == "" || k < selectedKey {
-				selectedKey = k
-				selectedGroup = g
+		var displayGroups []ProxyGroup
+		var displayNames []string
+
+		// Сначала добавляем группы в порядке из конфига, если они есть в ответе API
+		for _, name := range orderedNames {
+			if g, ok := groups[name]; ok {
+				displayGroups = append(displayGroups, g)
+				displayNames = append(displayNames, name)
+				delete(groups, name)
 			}
 		}
 
-		// Если ничего не нашли кроме GLOBAL (или GLOBAL был единственным)
-		if selectedKey == "" {
+		// Если остались другие группы (кроме GLOBAL), добавим их в алфавитном порядке
+		var extraNames []string
+		for name := range groups {
+			if !strings.EqualFold(name, "GLOBAL") {
+				extraNames = append(extraNames, name)
+			}
+		}
+		
+		for _, name := range extraNames {
+			if g, ok := groups[name]; ok {
+				displayGroups = append(displayGroups, g)
+				displayNames = append(displayNames, name)
+			}
+		}
+
+		// Если совсем ничего нет, но есть GLOBAL
+		if len(displayNames) == 0 {
 			if g, ok := groups["GLOBAL"]; ok {
-				selectedKey = "GLOBAL"
-				selectedGroup = g
+				displayGroups = append(displayGroups, g)
+				displayNames = append(displayNames, "GLOBAL")
 			}
-		}
-
-		if selectedKey == "" {
-			return
 		}
 
 		proxyMu.Lock()
-		activeGroup = selectedKey
-		proxyNames = selectedGroup.All
-		proxyMu.Unlock()
-
-		mProxies.SetTitle("Прокси: " + selectedKey)
-		mProxies.Enable()
-
-		for i, item := range proxyPool {
-			if i < len(selectedGroup.All) {
-				label := selectedGroup.All[i]
-				if selectedGroup.Now == label {
-					label = "✓ " + label
-				}
-				item.SetTitle(label)
-				item.Show()
-			} else {
-				item.Hide()
+		activeGroupsData = make([]GroupData, len(displayNames))
+		for i, name := range displayNames {
+			activeGroupsData[i] = GroupData{
+				Name: name,
+				All:  displayGroups[i].All,
 			}
 		}
+		proxyMu.Unlock()
 
+		for i := 0; i < maxGroups; i++ {
+			if i < len(displayNames) {
+				name := displayNames[i]
+				g := displayGroups[i]
+
+				title := name
+				if i == 0 {
+					title = "★ " + name
+				} else {
+					title = "  " + name
+				}
+
+				groupMenus[i].Item.SetTitle(title)
+				groupMenus[i].Item.Show()
+
+				for p := 0; p < maxProxiesPerGroup; p++ {
+					if p < len(g.All) {
+						label := g.All[p]
+						if g.Now == label {
+							label = "✓ " + label
+						}
+						groupMenus[i].Proxies[p].SetTitle(label)
+						groupMenus[i].Proxies[p].Show()
+					} else {
+						groupMenus[i].Proxies[p].Hide()
+					}
+				}
+			} else {
+				groupMenus[i].Item.Hide()
+			}
+		}
 	}
+
 
 	updateSubs := func() {
 		cfg, _ := LoadSubConfig()
@@ -465,15 +515,18 @@ func onReady() {
 
 			case click := <-proxyClickCh:
 				proxyMu.Lock()
-				group := activeGroup
-				var name string
-				if click.idx < len(proxyNames) {
-					name = proxyNames[click.idx]
+				var groupName, proxyName string
+				if click.groupIndex < len(activeGroupsData) {
+					groupData := activeGroupsData[click.groupIndex]
+					groupName = groupData.Name
+					if click.proxyIndex < len(groupData.All) {
+						proxyName = groupData.All[click.proxyIndex]
+					}
 				}
 				proxyMu.Unlock()
 
-				if name != "" && group != "" {
-					if err := api.SelectProxy(group, name); err != nil {
+				if groupName != "" && proxyName != "" {
+					if err := api.SelectProxy(groupName, proxyName); err != nil {
 						showMessage("Ошибка выбора прокси", err.Error())
 					} else {
 						updateProxies()
@@ -490,11 +543,9 @@ func onReady() {
 						syncToggle() // откат
 					}
 					// Скрываем прокси
-					for _, item := range proxyPool {
-						item.Hide()
+					for i := 0; i < maxGroups; i++ {
+						groupMenus[i].Item.Hide()
 					}
-					mProxies.SetTitle("Прокси")
-					mProxies.Disable()
 				} else {
 					// --- Включить ---
 					configPath := exeDir() + "\\config.yaml"
@@ -554,6 +605,9 @@ func onReady() {
 						showMessage("Ошибка", "Не удалось обновить config.yaml:\n"+err.Error())
 						continue
 					}
+
+					// Проверяем поддержку IPv6 и отключаем в конфиге при необходимости
+					_ = AutoPatchIPv6IfNeeded(configPath)
 
 					// Запускаем
 					if err := pm.Start(); err != nil {

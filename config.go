@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -246,3 +247,119 @@ func EnsureExternalController(path, controller string) error {
 	}
 	return nil
 }
+
+func isIPv6Supported() bool {
+	// Try to listen on tcp6 wildcard address
+	ln, err := net.Listen("tcp6", "[::]:0")
+	if err != nil {
+		return false
+	}
+	ln.Close()
+	return true
+}
+
+func DisableIPv6InConfig(path string) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	
+	lines := strings.Split(string(content), "\n")
+	modified := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "ipv6:") {
+			parts := strings.SplitN(trimmed, ":", 2)
+			if len(parts) == 2 {
+				val := strings.TrimSpace(parts[1])
+				if val == "true" || val == "yes" {
+					indent := line[:strings.Index(line, trimmed)]
+					lines[i] = indent + "ipv6: false"
+					modified = true
+				}
+			}
+		}
+	}
+	
+	if modified {
+		newContent := strings.Join(lines, "\n")
+		return os.WriteFile(path, []byte(newContent), 0644)
+	}
+	return nil
+}
+
+func AutoPatchIPv6IfNeeded(path string) error {
+	// Always disable IPv6 in config on Windows to prevent DNS hijack resolution errors (e.g. 'lookup :: no such host')
+	return DisableIPv6InConfig(path)
+}
+
+func GetOrderedSelectGroupsFromConfig() []string {
+	configPath := filepath.Join(exeDir(), "config.yaml")
+	file, err := os.Open(configPath)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+
+	var order []string
+	scanner := bufio.NewScanner(file)
+	inProxyGroups := false
+	var currentName string
+	var currentType string
+	var currentHidden bool
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+		
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") && trimmed != "" {
+			if strings.HasPrefix(trimmed, "proxy-groups:") {
+				inProxyGroups = true
+				continue
+			} else {
+				inProxyGroups = false
+			}
+		}
+
+		if !inProxyGroups {
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "-") {
+			if currentName != "" && (currentType == "select" || currentType == "") && !currentHidden {
+				order = append(order, currentName)
+			}
+			currentName = ""
+			currentType = ""
+			currentHidden = false
+			
+			trimmed = strings.TrimPrefix(trimmed, "-")
+			trimmed = strings.TrimSpace(trimmed)
+		}
+
+		if strings.HasPrefix(trimmed, "name:") {
+			nameVal := strings.TrimPrefix(trimmed, "name:")
+			nameVal = strings.TrimSpace(nameVal)
+			nameVal = strings.Trim(nameVal, `"'`)
+			currentName = nameVal
+		} else if strings.HasPrefix(trimmed, "type:") {
+			typeVal := strings.TrimPrefix(trimmed, "type:")
+			typeVal = strings.TrimSpace(typeVal)
+			typeVal = strings.Trim(typeVal, `"'`)
+			currentType = typeVal
+		} else if strings.HasPrefix(trimmed, "hidden:") {
+			hiddenVal := strings.TrimPrefix(trimmed, "hidden:")
+			hiddenVal = strings.TrimSpace(hiddenVal)
+			if hiddenVal == "true" {
+				currentHidden = true
+			}
+		}
+	}
+	if currentName != "" && (currentType == "select" || currentType == "") && !currentHidden {
+		order = append(order, currentName)
+	}
+
+	return order
+}
+
+

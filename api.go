@@ -33,9 +33,10 @@ type MihomoAPI struct {
 }
 
 type ProxyGroup struct {
-	Type string   `json:"type"`
-	Now  string   `json:"now"`
-	All  []string `json:"all"`
+	Type   string   `json:"type"`
+	Now    string   `json:"now"`
+	All    []string `json:"all"`
+	Hidden bool     `json:"hidden"`
 }
 
 func NewMihomoAPI(port string) *MihomoAPI {
@@ -89,7 +90,9 @@ func (api *MihomoAPI) GetProxyGroups() (map[string]ProxyGroup, error) {
 		}
 		var g ProxyGroup
 		if err := json.Unmarshal(data, &g); err == nil && g.Type == "Selector" {
-			groups[name] = g
+			if !g.Hidden {
+				groups[name] = g
+			}
 		}
 	}
 
