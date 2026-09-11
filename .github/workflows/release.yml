@@ -40,8 +40,9 @@ jobs:
           git clone --depth=1 -b v1-19-30-smart-moshen https://github.com/legiz-ru/moshen.git moshen_src
           cd moshen_src
           # Fix Go 1.20 compatibility in muxcool
+          sed -i 's|"context"|"context"\n\t"github.com/metacubex/mihomo/common/contextutils"|' transport/muxcool/server.go
           sed -i 's/context\.WithoutCancel/contextutils\.WithoutCancel/g' transport/muxcool/server.go
-          grep -q "contextutils" transport/muxcool/server.go || sed -i 's|"context"|"context"\n\t"github.com/metacubex/mihomo/common/contextutils"|' transport/muxcool/server.go
+          git diff transport/muxcool/server.go
           go build -tags with_gvisor -trimpath -ldflags "-s -w -buildid= -X 'github.com/metacubex/mihomo/constant.Version=v1.19.30-smart-moshen'" -o "$GITHUB_WORKSPACE/assets/bin/x86/mihomo.exe" .
           cd ..
           rm -rf moshen_src
