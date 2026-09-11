@@ -20,12 +20,29 @@ var (
 	user32          = syscall.NewLazyDLL("user32.dll")
 	procMessageBoxW = user32.NewProc("MessageBoxW")
 
+	shell32           = syscall.NewLazyDLL("shell32.dll")
+	procShellExecuteW = shell32.NewProc("ShellExecuteW")
+
 	pm  *ProcessManager
 	api *MihomoAPI
 
 	//go:embed assets/icon.ico
 	iconData []byte
 )
+
+func openPath(target string) {
+	pTarget, err := syscall.UTF16PtrFromString(target)
+	if err != nil {
+		return
+	}
+	pOpen, _ := syscall.UTF16PtrFromString("open")
+	// SW_SHOWNORMAL = 1
+	ret, _, _ := procShellExecuteW.Call(0, uintptr(unsafe.Pointer(pOpen)), uintptr(unsafe.Pointer(pTarget)), 0, 0, 1)
+	if ret <= 32 {
+		// Fallback: запуск через explorer.exe напрямую
+		_ = exec.Command("explorer.exe", target).Start()
+	}
+}
 
 func showMessage(title, text string) {
 	tPtr, _ := syscall.UTF16PtrFromString(title)
@@ -710,7 +727,7 @@ func onReady() {
 
 			// ── Настройки ────────────────────────────────────────
 			case <-mOpenFolder.ClickedCh:
-				runHidden("cmd", "/c", "start", "", exeDir()).Run()
+				openPath(exeDir())
 
 			case <-mInstall.ClickedCh:
 				if err := pm.Install(); err != nil {
@@ -727,7 +744,7 @@ func onReady() {
 				}
 
 			case <-mPanel.ClickedCh:
-				runHidden("cmd", "/c", "start", "http://board.zash.run.place").Run()
+				openPath("http://board.zash.run.place")
 
 			case <-mQuit.ClickedCh:
 				systray.Quit()
