@@ -125,3 +125,29 @@ func (api *MihomoAPI) SelectProxy(group, name string) error {
 	}
 	return nil
 }
+
+func (api *MihomoAPI) ReloadConfig(configPath string) error {
+	endpoint := fmt.Sprintf("%s/configs?force=true", api.BaseURL)
+	body, _ := json.Marshal(map[string]string{"path": configPath})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewBuffer(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := api.Client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API error (%s): %s", resp.Status, string(respBody))
+	}
+	return nil
+}

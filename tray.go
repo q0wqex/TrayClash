@@ -442,8 +442,17 @@ func onReady() {
 				}
 
 			case idx := <-subClickCh:
+				// Очищаем накопившиеся повторные клики
+				for len(subClickCh) > 0 {
+					<-subClickCh
+				}
+
 				cfg, _ := LoadSubConfig()
-				if idx < len(cfg.Subscriptions) && idx != cfg.ActiveIndex {
+				if idx >= len(cfg.Subscriptions) {
+					continue
+				}
+
+				if idx != cfg.ActiveIndex {
 					cfg.ActiveIndex = idx
 					SaveSubConfig(cfg)
 					updateSubs()
@@ -460,6 +469,79 @@ func onReady() {
 						// Just remove config so next start uses new URL
 						os.Remove(filepath.Join(exeDir(), "config.yaml"))
 					}
+				} else {
+					// Повторный клик по активной подписке -> обновление и мягкий перезапуск ядра
+					sub := cfg.Subscriptions[idx]
+					if sub.URL == "" {
+						continue
+					}
+
+					device := GetDeviceInfo()
+					tmpPath := filepath.Join(exeDir(), "tmp_config.yaml")
+					res := DownloadConfig(sub.URL, device, tmpPath)
+
+					if res.MaxDevicesReached || res.HWIDLimit {
+						os.Remove(tmpPath)
+						showMessage("Лимит устройств", "Достигнут максимум разрешённых устройств.")
+						continue
+					}
+					if res.HWIDNotSupported {
+						os.Remove(tmpPath)
+						showMessage("HWID", "Сервер требует HWID-идентификацию.")
+						continue
+					}
+					if res.Err != nil {
+						os.Remove(tmpPath)
+						showMessage("Ошибка обновления", "Не удалось загрузить подписку:\n"+res.Err.Error())
+						continue
+					}
+
+					// Обновляем название подписки, если сервер вернул новое
+					if res.ProfileTitle != "" && res.ProfileTitle != sub.Name {
+						cfg.Subscriptions[idx].Name = res.ProfileTitle
+						SaveSubConfig(cfg)
+						updateSubs()
+					}
+
+					// Дописываем external-controller если нет
+					if err := EnsureExternalController(tmpPath, "127.0.0.1:9090"); err != nil {
+						os.Remove(tmpPath)
+						showMessage("Ошибка", "Не удалось подготовить config.yaml:\n"+err.Error())
+						continue
+					}
+
+					// Проверяем поддержку IPv6 и отключаем в конфиге при необходимости
+					_ = AutoPatchIPv6IfNeeded(tmpPath)
+
+					configPath := filepath.Join(exeDir(), "config.yaml")
+					data, err := os.ReadFile(tmpPath)
+					os.Remove(tmpPath)
+					if err != nil {
+						showMessage("Ошибка", "Не удалось прочитать временный файл:\n"+err.Error())
+						continue
+					}
+					if err := os.WriteFile(configPath, data, 0644); err != nil {
+						showMessage("Ошибка", "Не удалось сохранить config.yaml:\n"+err.Error())
+						continue
+					}
+
+					// Мягкий перезапуск ядра, если оно запущено
+					if isProcessRunning(pm) {
+						api.BaseURL = "http://127.0.0.1:" + ReadAPIPortFromConfig()
+						if err := api.ReloadConfig(configPath); err != nil {
+							// При ошибке мягкого релоада — классический перезапуск процесса
+							pm.Stop()
+							if err := pm.Start(); err != nil {
+								showMessage("Ошибка перезапуска", err.Error())
+							}
+						}
+						go func() {
+							time.Sleep(300 * time.Millisecond)
+							updateProxies()
+						}()
+					}
+
+					showMessage("Успех", fmt.Sprintf("Подписка «%s» обновлена", cfg.Subscriptions[idx].Name))
 				}
 
 			case <-mAddSub.ClickedCh:
