@@ -25,19 +25,26 @@ jobs:
           cp wintun_extracted/wintun/bin/x86/wintun.dll assets/bin/x86/wintun.dll
           rm -rf wintun.zip wintun_extracted
 
-      - name: Download and extract Mihomo cores
-        run: |
-          # Download x86 Mihomo (go120 version)
-          curl -L -o mihomo_x86.zip https://github.com/MetaCubeX/mihomo/releases/download/v1.19.26/mihomo-windows-386-go120-v1.19.26.zip
-          unzip mihomo_x86.zip -d mihomo_x86_extracted
-          mv mihomo_x86_extracted/*.exe assets/bin/x86/mihomo.exe
-          rm -rf mihomo_x86.zip mihomo_x86_extracted
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.20'
           cache: true
+
+      - name: Build Moshen core
+        env:
+          GOOS: windows
+          GOARCH: '386'
+          CGO_ENABLED: 0
+        run: |
+          git clone --depth=1 -b v1-19-30-smart-moshen https://github.com/legiz-ru/moshen.git moshen_src
+          cd moshen_src
+          # Fix Go 1.20 compatibility in muxcool
+          sed -i 's/context\.WithoutCancel/contextutils\.WithoutCancel/g' transport/muxcool/server.go
+          grep -q "contextutils" transport/muxcool/server.go || sed -i 's|"context"|"context"\n\t"github.com/metacubex/mihomo/common/contextutils"|' transport/muxcool/server.go
+          go build -tags with_gvisor -trimpath -ldflags "-s -w -buildid= -X 'github.com/metacubex/mihomo/constant.Version=v1.19.30-smart-moshen'" -o "$GITHUB_WORKSPACE/assets/bin/x86/mihomo.exe" .
+          cd ..
+          rm -rf moshen_src
 
       - name: Install dependencies
         run: go mod download
