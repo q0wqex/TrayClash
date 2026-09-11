@@ -134,6 +134,11 @@ func (pm *ProcessManager) Status() (string, error) {
 	return "stopped", nil
 }
 
+// IsAutostartEnabled проверяет наличие задачи в планировщике
+func (pm *ProcessManager) IsAutostartEnabled() bool {
+	return runHidden("schtasks", "/query", "/tn", "TrayClash").Run() == nil
+}
+
 // Install/Uninstall — теперь управляют автозагрузкой через планировщик задач
 // Это необходимо для обхода UAC и работы приложений с правами администратора
 func (pm *ProcessManager) Install() error {

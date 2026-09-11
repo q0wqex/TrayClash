@@ -154,23 +154,9 @@ func onReady() {
 	pm = NewProcessManager()
 	api = NewMihomoAPI(ReadAPIPortFromConfig())
 
-	// ── 1. Переключатель ──────────────────────────────────────────
+	// ── 1. Переключатель и Прокси ─────────────────────────────────
 	mToggle := systray.AddMenuItem("Включить", "Включить / Выключить Mihomo")
-	mPanel := systray.AddMenuItem("Панель", "Открыть панель управления Zashboard")
 
-	// ── 2. Подписки ──────────────────────────────────────────────
-	mSubs := systray.AddMenuItem("Подписки", "Управление подписками")
-	subPool := make([]*systray.MenuItem, maxSubItems)
-	for i := range subPool {
-		subPool[i] = mSubs.AddSubMenuItem("", "")
-		subPool[i].Hide()
-	}
-	mAddSub := mSubs.AddSubMenuItem("Добавить подписку...", "Добавить новый URL")
-	mDelSub := mSubs.AddSubMenuItem("Удалить текущую", "Удалить выбранную подписку")
-
-	systray.AddSeparator()
-
-	// ── 3. Прокси ────────────────────────────────────────────────
 	groupMenus := make([]GroupMenu, maxGroups)
 	for g := 0; g < maxGroups; g++ {
 		groupMenus[g].Item = systray.AddMenuItem("", "")
@@ -181,6 +167,29 @@ func onReady() {
 			groupMenus[g].Proxies[p].Hide()
 		}
 	}
+
+	systray.AddSeparator()
+
+	// ── 2. Подписки ──────────────────────────────────────────────
+	mSubs := systray.AddMenuItem("Подписки", "Управление подписками")
+	subPool := make([]*systray.MenuItem, maxSubItems)
+	for i := range subPool {
+		subPool[i] = mSubs.AddSubMenuItem("", "")
+		subPool[i].Hide()
+	}
+	mUpdateSub := mSubs.AddSubMenuItem("Обновить подписку", "Загрузить свежий конфиг активной подписки")
+	mAddSub := mSubs.AddSubMenuItem("Добавить подписку...", "Добавить новый URL")
+	mDelSub := mSubs.AddSubMenuItem("Удалить текущую", "Удалить выбранную подписку")
+
+	// ── 3. Настройки ─────────────────────────────────────────────
+	mSettings := systray.AddMenuItem("Настройки", "Параметры")
+	mPanel := mSettings.AddSubMenuItem("Открыть панель", "Открыть веб-панель Zashboard в браузере")
+	mOpenFolder := mSettings.AddSubMenuItem("Открыть папку с данными", "Открыть папку в AppData")
+	mAutostart := mSettings.AddSubMenuItem("Автозагрузка", "Запускать TrayClash при старте Windows")
+
+	// ── 4. Выйти ─────────────────────────────────────────────────
+	systray.AddSeparator()
+	mQuit := systray.AddMenuItem("Выйти", "Остановить сервис и закрыть")
 
 	type GroupData struct {
 		Name string
@@ -328,16 +337,95 @@ func onReady() {
 		}(subPool[i])
 	}
 
-	// ── 4. Настройки ─────────────────────────────────────────────
-	systray.AddSeparator()
-	mSettings := systray.AddMenuItem("Настройки", "Параметры")
-	mOpenFolder := mSettings.AddSubMenuItem("Открыть папку с данными", "Открыть папку в AppData")
-	mInstall := mSettings.AddSubMenuItem("Добавить в автозагрузку", "Запускать TrayClash при старте Windows")
-	mUninstall := mSettings.AddSubMenuItem("Убрать из автозагрузки", "Удалить из реестра")
+	updateAutostartStatus := func() {
+		if pm.IsAutostartEnabled() {
+			mAutostart.SetTitle("✓ Автозагрузка")
+		} else {
+			mAutostart.SetTitle("  Автозагрузка")
+		}
+	}
+	updateAutostartStatus()
 
-	// ── 4. Выйти ─────────────────────────────────────────────────
-	systray.AddSeparator()
-	mQuit := systray.AddMenuItem("Выйти", "Остановить сервис и закрыть")
+	refreshActiveSubscription := func() {
+		cfg, _ := LoadSubConfig()
+		if cfg.ActiveIndex < 0 || cfg.ActiveIndex >= len(cfg.Subscriptions) {
+			showMessage("Информация", "Нет активной подписки для обновления.")
+			return
+		}
+
+		sub := cfg.Subscriptions[cfg.ActiveIndex]
+		if sub.URL == "" {
+			showMessage("Ошибка", "У активной подписки не указан URL.")
+			return
+		}
+
+		device := GetDeviceInfo()
+		tmpPath := filepath.Join(exeDir(), "tmp_config.yaml")
+		res := DownloadConfig(sub.URL, device, tmpPath)
+
+		if res.MaxDevicesReached || res.HWIDLimit {
+			os.Remove(tmpPath)
+			showMessage("Лимит устройств", "Достигнут максимум разрешённых устройств.")
+			return
+		}
+		if res.HWIDNotSupported {
+			os.Remove(tmpPath)
+			showMessage("HWID", "Сервер требует HWID-идентификацию.")
+			return
+		}
+		if res.Err != nil {
+			os.Remove(tmpPath)
+			showMessage("Ошибка обновления", "Не удалось загрузить подписку:\n"+res.Err.Error())
+			return
+		}
+
+		// Обновляем название подписки, если сервер вернул новое
+		if res.ProfileTitle != "" && res.ProfileTitle != sub.Name {
+			cfg.Subscriptions[cfg.ActiveIndex].Name = res.ProfileTitle
+			SaveSubConfig(cfg)
+			updateSubs()
+		}
+
+		// Дописываем external-controller если нет
+		if err := EnsureExternalController(tmpPath, "127.0.0.1:9090"); err != nil {
+			os.Remove(tmpPath)
+			showMessage("Ошибка", "Не удалось подготовить config.yaml:\n"+err.Error())
+			return
+		}
+
+		// Проверяем поддержку IPv6 и отключаем в конфиге при необходимости
+		_ = AutoPatchIPv6IfNeeded(tmpPath)
+
+		configPath := filepath.Join(exeDir(), "config.yaml")
+		data, err := os.ReadFile(tmpPath)
+		os.Remove(tmpPath)
+		if err != nil {
+			showMessage("Ошибка", "Не удалось прочитать временный файл:\n"+err.Error())
+			return
+		}
+		if err := os.WriteFile(configPath, data, 0644); err != nil {
+			showMessage("Ошибка", "Не удалось сохранить config.yaml:\n"+err.Error())
+			return
+		}
+
+		// Мягкий перезапуск ядра, если оно запущено
+		if isProcessRunning(pm) {
+			api.BaseURL = "http://127.0.0.1:" + ReadAPIPortFromConfig()
+			if err := api.ReloadConfig(configPath); err != nil {
+				// При ошибке мягкого релоада — классический перезапуск процесса
+				pm.Stop()
+				if err := pm.Start(); err != nil {
+					showMessage("Ошибка перезапуска", err.Error())
+				}
+			}
+			go func() {
+				time.Sleep(300 * time.Millisecond)
+				updateProxies()
+			}()
+		}
+
+		showMessage("Успех", fmt.Sprintf("Подписка «%s» обновлена", cfg.Subscriptions[cfg.ActiveIndex].Name))
+	}
 
 	// ─────────────────────────────────────────────────────────────
 	// Оптимистичный апдейт заголовка переключателя
@@ -487,79 +575,11 @@ func onReady() {
 						os.Remove(filepath.Join(exeDir(), "config.yaml"))
 					}
 				} else {
-					// Повторный клик по активной подписке -> обновление и мягкий перезапуск ядра
-					sub := cfg.Subscriptions[idx]
-					if sub.URL == "" {
-						continue
-					}
-
-					device := GetDeviceInfo()
-					tmpPath := filepath.Join(exeDir(), "tmp_config.yaml")
-					res := DownloadConfig(sub.URL, device, tmpPath)
-
-					if res.MaxDevicesReached || res.HWIDLimit {
-						os.Remove(tmpPath)
-						showMessage("Лимит устройств", "Достигнут максимум разрешённых устройств.")
-						continue
-					}
-					if res.HWIDNotSupported {
-						os.Remove(tmpPath)
-						showMessage("HWID", "Сервер требует HWID-идентификацию.")
-						continue
-					}
-					if res.Err != nil {
-						os.Remove(tmpPath)
-						showMessage("Ошибка обновления", "Не удалось загрузить подписку:\n"+res.Err.Error())
-						continue
-					}
-
-					// Обновляем название подписки, если сервер вернул новое
-					if res.ProfileTitle != "" && res.ProfileTitle != sub.Name {
-						cfg.Subscriptions[idx].Name = res.ProfileTitle
-						SaveSubConfig(cfg)
-						updateSubs()
-					}
-
-					// Дописываем external-controller если нет
-					if err := EnsureExternalController(tmpPath, "127.0.0.1:9090"); err != nil {
-						os.Remove(tmpPath)
-						showMessage("Ошибка", "Не удалось подготовить config.yaml:\n"+err.Error())
-						continue
-					}
-
-					// Проверяем поддержку IPv6 и отключаем в конфиге при необходимости
-					_ = AutoPatchIPv6IfNeeded(tmpPath)
-
-					configPath := filepath.Join(exeDir(), "config.yaml")
-					data, err := os.ReadFile(tmpPath)
-					os.Remove(tmpPath)
-					if err != nil {
-						showMessage("Ошибка", "Не удалось прочитать временный файл:\n"+err.Error())
-						continue
-					}
-					if err := os.WriteFile(configPath, data, 0644); err != nil {
-						showMessage("Ошибка", "Не удалось сохранить config.yaml:\n"+err.Error())
-						continue
-					}
-
-					// Мягкий перезапуск ядра, если оно запущено
-					if isProcessRunning(pm) {
-						api.BaseURL = "http://127.0.0.1:" + ReadAPIPortFromConfig()
-						if err := api.ReloadConfig(configPath); err != nil {
-							// При ошибке мягкого релоада — классический перезапуск процесса
-							pm.Stop()
-							if err := pm.Start(); err != nil {
-								showMessage("Ошибка перезапуска", err.Error())
-							}
-						}
-						go func() {
-							time.Sleep(300 * time.Millisecond)
-							updateProxies()
-						}()
-					}
-
-					showMessage("Успех", fmt.Sprintf("Подписка «%s» обновлена", cfg.Subscriptions[idx].Name))
+					refreshActiveSubscription()
 				}
+
+			case <-mUpdateSub.ClickedCh:
+				refreshActiveSubscription()
 
 			case <-mAddSub.ClickedCh:
 				url := inputBox("Новая подписка", "Введите URL подписки:", "")
@@ -729,18 +749,21 @@ func onReady() {
 			case <-mOpenFolder.ClickedCh:
 				openPath(exeDir())
 
-			case <-mInstall.ClickedCh:
-				if err := pm.Install(); err != nil {
-					showMessage("Ошибка", err.Error())
+			case <-mAutostart.ClickedCh:
+				if pm.IsAutostartEnabled() {
+					if err := pm.Uninstall(); err != nil {
+						showMessage("Ошибка", "Не удалось отключить автозагрузку:\n"+err.Error())
+					} else {
+						updateAutostartStatus()
+						showMessage("Успех", "Автозагрузка выключена")
+					}
 				} else {
-					showMessage("Успех", "Автозагрузка включена")
-				}
-
-			case <-mUninstall.ClickedCh:
-				if err := pm.Uninstall(); err != nil {
-					showMessage("Ошибка", err.Error())
-				} else {
-					showMessage("Успех", "Автозагрузка выключена")
+					if err := pm.Install(); err != nil {
+						showMessage("Ошибка", "Не удалось включить автозагрузку:\n"+err.Error())
+					} else {
+						updateAutostartStatus()
+						showMessage("Успех", "Автозагрузка включена")
+					}
 				}
 
 			case <-mPanel.ClickedCh:
