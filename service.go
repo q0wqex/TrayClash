@@ -10,18 +10,34 @@ import (
 	"unsafe"
 )
 
-// ProcessManager управляет ядром mihomo как фоновым процессом
+// ProcessManager управляет ядром mihomo / custom как фоновым процессом
 type ProcessManager struct {
 	ExePath string
 	cmd     *exec.Cmd
 	job     syscall.Handle
 }
 
+// RefreshExePath проверяет наличие custom.exe в папке данных.
+// Если custom.exe существует, используется он, иначе стандартный mihomo.exe.
+func (pm *ProcessManager) RefreshExePath() string {
+	customPath := filepath.Join(exeDir(), "custom.exe")
+	if fi, err := os.Stat(customPath); err == nil && !fi.IsDir() {
+		pm.ExePath = customPath
+	} else {
+		pm.ExePath = filepath.Join(exeDir(), "mihomo.exe")
+	}
+	return pm.ExePath
+}
+
+// IsCustomCore возвращает true, если активно кастомное ядро
+func (pm *ProcessManager) IsCustomCore() bool {
+	return filepath.Base(pm.ExePath) == "custom.exe"
+}
+
 // NewProcessManager создает новый менеджер процессов
 func NewProcessManager() *ProcessManager {
-	pm := &ProcessManager{
-		ExePath: filepath.Join(exeDir(), "mihomo.exe"),
-	}
+	pm := &ProcessManager{}
+	pm.RefreshExePath()
 	pm.setupJobObject()
 	return pm
 }
@@ -65,6 +81,8 @@ func (pm *ProcessManager) Start() error {
 		return nil
 	}
 
+	pm.RefreshExePath()
+
 	pm.cmd = exec.Command(pm.ExePath, "-d", exeDir())
 	pm.cmd.Dir = exeDir()
 	pm.cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -105,8 +123,9 @@ func (pm *ProcessManager) Stop() error {
 		pm.cmd = nil
 	}
 	
-	// 2. Гарантированно добиваем по имени
+	// 2. Гарантированно добиваем по имени (и стандартное, и кастомное)
 	runHidden("taskkill", "/F", "/IM", "mihomo.exe").Run()
+	runHidden("taskkill", "/F", "/IM", "custom.exe").Run()
 	
 	return nil
 }
@@ -121,9 +140,23 @@ func (pm *ProcessManager) IsRunning() bool {
 		pm.cmd = nil
 	}
 	
-	// Скрытый запуск tasklist, чтобы не моргало окно
-	out, _ := runHidden("tasklist", "/FI", "IMAGENAME eq mihomo.exe", "/NH").Output()
-	return strings.Contains(string(out), "mihomo.exe")
+	// Скрытый запуск tasklist для активного ядра
+	exeName := filepath.Base(pm.ExePath)
+	if exeName == "" || exeName == "." {
+		exeName = "mihomo.exe"
+	}
+	out, _ := runHidden("tasklist", "/FI", fmt.Sprintf("IMAGENAME eq %s", exeName), "/NH").Output()
+	if strings.Contains(string(out), exeName) {
+		return true
+	}
+
+	// Также проверяем альтернативное имя
+	altName := "custom.exe"
+	if exeName == "custom.exe" {
+		altName = "mihomo.exe"
+	}
+	altOut, _ := runHidden("tasklist", "/FI", fmt.Sprintf("IMAGENAME eq %s", altName), "/NH").Output()
+	return strings.Contains(string(altOut), altName)
 }
 
 // Status — для совместимости с интерфейсом tray.go

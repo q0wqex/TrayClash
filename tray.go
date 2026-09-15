@@ -126,7 +126,7 @@ type GroupMenu struct {
 func prepareResources() {
 	// Extract embedded files to AppData
 	dir := exeDir()
-	
+
 	files := []struct {
 		name string
 		data []byte
@@ -137,7 +137,7 @@ func prepareResources() {
 
 	for _, f := range files {
 		path := filepath.Join(dir, f.name)
-		
+
 		// Проверяем, нужно ли перезаписать (если файла нет или размер отличается)
 		if info, err := os.Stat(path); err != nil || info.Size() != int64(len(f.data)) {
 			os.WriteFile(path, f.data, 0755)
@@ -183,6 +183,7 @@ func onReady() {
 
 	// ── 3. Настройки ─────────────────────────────────────────────
 	mSettings := systray.AddMenuItem("Настройки", "Параметры")
+	mCoreInfo := mSettings.AddSubMenuItem("Ядро: mihomo.exe (стандартное)", "Текущее активное ядро")
 	mPanel := mSettings.AddSubMenuItem("Открыть панель", "Открыть веб-панель Zashboard в браузере")
 	mOpenFolder := mSettings.AddSubMenuItem("Открыть папку с данными", "Открыть папку в AppData")
 	mAutostart := mSettings.AddSubMenuItem("Автозагрузка", "Запускать TrayClash при старте Windows")
@@ -249,7 +250,7 @@ func onReady() {
 				extraNames = append(extraNames, name)
 			}
 		}
-		
+
 		for _, name := range extraNames {
 			if g, ok := groups[name]; ok {
 				displayGroups = append(displayGroups, g)
@@ -346,6 +347,16 @@ func onReady() {
 	}
 	updateAutostartStatus()
 
+	updateCoreInfo := func() {
+		pm.RefreshExePath()
+		if pm.IsCustomCore() {
+			mCoreInfo.SetTitle("✓ Ядро: custom.exe (кастомное)")
+		} else {
+			mCoreInfo.SetTitle("  Ядро: mihomo.exe (стандартное)")
+		}
+	}
+	updateCoreInfo()
+
 	refreshActiveSubscription := func() {
 		cfg, _ := LoadSubConfig()
 		if cfg.ActiveIndex < 0 || cfg.ActiveIndex >= len(cfg.Subscriptions) {
@@ -440,6 +451,7 @@ func onReady() {
 	// Проверяем реальное состояние и обновляем заголовок
 	syncToggle := func() {
 		setRunning(isProcessRunning(pm))
+		updateCoreInfo()
 	}
 	syncToggle()
 
@@ -615,7 +627,7 @@ func onReady() {
 				cfg, _ := LoadSubConfig()
 				if cfg.ActiveIndex >= 0 && cfg.ActiveIndex < len(cfg.Subscriptions) {
 					cfg.Subscriptions = append(cfg.Subscriptions[:cfg.ActiveIndex], cfg.Subscriptions[cfg.ActiveIndex+1:]...)
-					
+
 					// Stop core and remove config if we deleted a subscription
 					if isProcessRunning(pm) {
 						pm.Stop()
@@ -740,14 +752,24 @@ func onReady() {
 								return err
 							})
 							updateProxies()
+
 							setRunning(isProcessRunning(pm)) // подтверждение реального статуса
 						}()
 					}
 				}
 
 			// ── Настройки ────────────────────────────────────────
+			case <-mCoreInfo.ClickedCh:
+				updateCoreInfo()
+				if pm.IsCustomCore() {
+					showMessage("Ядро прокси", fmt.Sprintf("Используется кастомное ядро:\n%s\n\nЧтобы вернуться на стандартное ядро, удалите или переименуйте custom.exe в папке с данными.", pm.ExePath))
+				} else {
+					showMessage("Ядро прокси", "Используется стандартное ядро (mihomo.exe).\n\nЧтобы использовать кастомное ядро, поместите файл custom.exe в папку с данными:\nНастройки -> Открыть папку с данными.")
+				}
+
 			case <-mOpenFolder.ClickedCh:
 				openPath(exeDir())
+				updateCoreInfo()
 
 			case <-mAutostart.ClickedCh:
 				if pm.IsAutostartEnabled() {

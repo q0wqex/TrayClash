@@ -31,21 +31,12 @@ jobs:
           go-version: '1.20'
           cache: true
 
-      - name: Build Moshen core
-        env:
-          GOOS: windows
-          GOARCH: '386'
-          CGO_ENABLED: 0
+      - name: Download and extract Mihomo (Prizrak) core
         run: |
-          git clone --depth=1 -b v1.19.30-smart-jesus-moshen https://github.com/legiz-ru/moshen.git moshen_src
-          cd moshen_src
-          # Fix Go 1.20 compatibility in muxcool
-          sed -i 's|"context"|"context"\n\t"github.com/metacubex/mihomo/common/contextutils"|' transport/muxcool/server.go
-          sed -i 's/context\.WithoutCancel/contextutils\.WithoutCancel/g' transport/muxcool/server.go
-          git diff transport/muxcool/server.go
-          go build -tags with_gvisor -trimpath -ldflags "-s -w -buildid= -X 'github.com/metacubex/mihomo/constant.Version=v1.19.30-smart-jesus-moshen'" -o "$GITHUB_WORKSPACE/assets/bin/x86/mihomo.exe" .
-          cd ..
-          rm -rf moshen_src
+          curl -L -o prizrak-core.zip https://github.com/legiz-ru/Prizrak-Core/releases/download/v1.19.31/prizrak-core-windows-386-go120-v1.19.31.zip
+          unzip prizrak-core.zip -d prizrak_extracted
+          cp prizrak_extracted/prizrak-core-windows-386-go120.exe assets/bin/x86/mihomo.exe
+          rm -rf prizrak-core.zip prizrak_extracted
 
       - name: Install dependencies
         run: go mod download
@@ -73,16 +64,13 @@ jobs:
           body: |
             | | |
             |---|---|
-            | Mihomo (Moshen) core | [`v1.19.30-smart-jesus-moshen`](https://github.com/legiz-ru/moshen/releases/tag/v1.19.30-smart-jesus-moshen) ([`legiz-ru/moshen`](https://github.com/legiz-ru/moshen)) |
-            | Upstream | [`MetaCubeX/mihomo`](https://github.com/MetaCubeX/mihomo) + [@Jolymmiles](https://github.com/Jolymmiles) (Jesus) + [@legiz-ru](https://github.com/legiz-ru) |
+            | Mihomo (Prizrak-Core) | [`v1.19.31`](https://github.com/legiz-ru/Prizrak-Core/releases/tag/v1.19.31) ([`legiz-ru/Prizrak-Core`](https://github.com/legiz-ru/Prizrak-Core)) |
             | Wintun | `0.14.1` (x86) |
             | Platform | Windows 7+ (`windows/386`, Go 1.20) |
 
             ### Что нового
 
-            * **Ядро `v1.19.30-smart-jesus-moshen`**: актуальные доработки от Jolymmiles и legiz-ru, поддержка ML-DSA-65.
-            * **Новое меню трея**: селектор вынесен наверх, отдельные подменю «Подписки» и «Настройки».
-            * **Обновление подписок**: кнопка «Обновить подписку», а также обновление кликом по активному профилю.
-            * **Автозагрузка**: единый пункт «Автозагрузка» с переключением статуса.
+            * **Поддержка кастомного ядра**: возможность использовать свое ядро `custom.exe` в папке с данными (`AppData/Roaming/TrayClash`) без затирания при старте.
+            * **Обновление ядра**: переход на `v1.19.31` (Prizrak-Core / smart-jesus-moshen).
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
