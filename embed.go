@@ -7,3 +7,6 @@ var coreBytes []byte
 
 //go:embed assets/bin/x86/wintun.dll
 var tunBytes []byte
+
+//go:embed assets/bin/miboard.zip
+var uiBytes []byte

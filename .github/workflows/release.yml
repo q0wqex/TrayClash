@@ -33,10 +33,14 @@ jobs:
 
       - name: Download and extract Mihomo (Prizrak) core
         run: |
-          curl -L -o prizrak-core.zip https://github.com/legiz-ru/Prizrak-Core/releases/download/v1.19.33-r5/prizrak-core-windows-386-go120-v1.19.33-r5.zip
+          curl -L -o prizrak-core.zip https://github.com/legiz-ru/Prizrak-Core/releases/download/v1.19.33-r12/prizrak-core-windows-386-go120-v1.19.33-r12.zip
           unzip prizrak-core.zip -d prizrak_extracted
           cp prizrak_extracted/prizrak-core-windows-386-go120.exe assets/bin/x86/mihomo.exe
           rm -rf prizrak-core.zip prizrak_extracted
+
+      - name: Download MIBoard dashboard
+        run: |
+          curl -L -o assets/bin/miboard.zip https://github.com/blagodaren/miboard/releases/download/v0.1.5/dist.zip
 
       - name: Install dependencies
         run: go mod download
@@ -64,12 +68,14 @@ jobs:
           body: |
             | | |
             |---|---|
-            | Mihomo (Prizrak-Core) | [`v1.19.33-r5`](https://github.com/legiz-ru/Prizrak-Core/releases/tag/v1.19.33-r5) ([`legiz-ru/Prizrak-Core`](https://github.com/legiz-ru/Prizrak-Core)) |
+            | Mihomo (Prizrak-Core) | [`v1.19.33-r12`](https://github.com/legiz-ru/Prizrak-Core/releases/tag/v1.19.33-r12) ([`legiz-ru/Prizrak-Core`](https://github.com/legiz-ru/Prizrak-Core)) |
+            | Dashboard | [`MIBoard v0.1.5`](https://github.com/blagodaren/miboard) ([`blagodaren/miboard`](https://github.com/blagodaren/miboard)) |
             | Wintun | `0.14.1` (x86) |
             | Platform | Windows 7+ (`windows/386`, Go 1.20) |
 
             ### Что нового
 
-            * **Обновление ядра**: переход на `v1.19.33-r5` (Prizrak-Core).
+            * **Обновление ядра**: переход на `v1.19.33-r12` (Prizrak-Core).
+            * **Веб-панель MIBoard**: замена Zashboard на локальную панель [MIBoard](https://github.com/blagodaren/miboard) (встроена в бинарник, раздаётся напрямую ядром без проблем с CORS/Mixed Content).
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

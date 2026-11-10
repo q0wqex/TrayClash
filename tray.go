@@ -1,7 +1,10 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -123,6 +126,51 @@ type GroupMenu struct {
 }
 
 
+func extractZipBytes(data []byte, destDir string) error {
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return err
+	}
+
+	for _, file := range reader.File {
+		cleanName := filepath.Clean(file.Name)
+		if strings.HasPrefix(cleanName, "..") || filepath.IsAbs(cleanName) {
+			continue // Path traversal protection
+		}
+
+		targetPath := filepath.Join(destDir, cleanName)
+		if file.FileInfo().IsDir() {
+			if err := os.MkdirAll(targetPath, 0755); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+			return err
+		}
+
+		rc, err := file.Open()
+		if err != nil {
+			return err
+		}
+
+		outFile, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, file.Mode())
+		if err != nil {
+			rc.Close()
+			return err
+		}
+
+		_, copyErr := io.Copy(outFile, rc)
+		rc.Close()
+		outFile.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+	}
+	return nil
+}
+
 func prepareResources() {
 	// Extract embedded files to AppData
 	dir := exeDir()
@@ -142,6 +190,12 @@ func prepareResources() {
 		if info, err := os.Stat(path); err != nil || info.Size() != int64(len(f.data)) {
 			os.WriteFile(path, f.data, 0755)
 		}
+	}
+
+	// Распаковываем UI MIBoard в ui/miboard, если index.html ещё не существует
+	uiIndex := filepath.Join(dir, "ui", "miboard", "index.html")
+	if _, err := os.Stat(uiIndex); os.IsNotExist(err) && len(uiBytes) > 0 {
+		_ = extractZipBytes(uiBytes, filepath.Join(dir, "ui", "miboard"))
 	}
 }
 
@@ -184,7 +238,7 @@ func onReady() {
 	// ── 3. Настройки ─────────────────────────────────────────────
 	mSettings := systray.AddMenuItem("Настройки", "Параметры")
 	mCoreInfo := mSettings.AddSubMenuItem("Ядро: mihomo.exe (стандартное)", "Текущее активное ядро")
-	mPanel := mSettings.AddSubMenuItem("Открыть панель", "Открыть веб-панель Zashboard в браузере")
+	mPanel := mSettings.AddSubMenuItem("Открыть панель", "Открыть веб-панель MIBoard в браузере")
 	mOpenFolder := mSettings.AddSubMenuItem("Открыть папку с данными", "Открыть папку в AppData")
 	mAutostart := mSettings.AddSubMenuItem("Автозагрузка", "Запускать TrayClash при старте Windows")
 
@@ -403,6 +457,9 @@ func onReady() {
 			showMessage("Ошибка", "Не удалось подготовить config.yaml:\n"+err.Error())
 			return
 		}
+
+		// Дописываем параметры для локальной веб-панели MIBoard
+		_ = EnsureExternalUI(tmpPath)
 
 		// Проверяем поддержку IPv6 и отключаем в конфиге при необходимости
 		_ = AutoPatchIPv6IfNeeded(tmpPath)
@@ -737,6 +794,9 @@ func onReady() {
 						continue
 					}
 
+					// Дописываем параметры для локальной веб-панели MIBoard
+					_ = EnsureExternalUI(configPath)
+
 					// Проверяем поддержку IPv6 и отключаем в конфиге при необходимости
 					_ = AutoPatchIPv6IfNeeded(configPath)
 
@@ -789,7 +849,13 @@ func onReady() {
 				}
 
 			case <-mPanel.ClickedCh:
-				openPath("http://board.zash.run.place")
+				port := ReadAPIPortFromConfig()
+				secret := ReadAPISecretFromConfig()
+				panelURL := fmt.Sprintf("http://127.0.0.1:%s/ui/miboard/", port)
+				if secret != "" {
+					panelURL += fmt.Sprintf("#/?secret=%s", url.QueryEscape(secret))
+				}
+				openPath(panelURL)
 
 			case <-mQuit.ClickedCh:
 				systray.Quit()

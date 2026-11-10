@@ -233,6 +233,57 @@ func ReadAPIPortFromConfig() string {
 	return "9090"
 }
 
+func ReadAPISecretFromConfig() string {
+	configPath := filepath.Join(exeDir(), "config.yaml")
+	file, err := os.Open(configPath)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "secret:") {
+			parts := strings.SplitN(trimmed, ":", 2)
+			if len(parts) >= 2 {
+				secret := strings.TrimSpace(parts[1])
+				secret = strings.Trim(secret, "\"' ")
+				return secret
+			}
+		}
+	}
+	return ""
+}
+
+func EnsureExternalUI(path string) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	lines := strings.Split(string(content), "\n")
+	var filtered []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "external-ui:") ||
+			strings.HasPrefix(trimmed, "external-ui-name:") ||
+			strings.HasPrefix(trimmed, "external-ui-url:") {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+
+	uiDirectives := []string{
+		"external-ui: ui",
+		"external-ui-name: miboard",
+		"external-ui-url: \"https://github.com/blagodaren/miboard/releases/latest/download/dist.zip\"",
+	}
+
+	newContent := strings.Join(uiDirectives, "\n") + "\n" + strings.Join(filtered, "\n")
+	return os.WriteFile(path, []byte(newContent), 0644)
+}
 
 func EnsureExternalController(path, controller string) error {
 	content, err := os.ReadFile(path)
